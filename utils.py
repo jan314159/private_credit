@@ -411,6 +411,11 @@ def save_model(input_file_name, **kwargs):
 
     ws = wb["Summary&CF_SICAV"]
 
+    ws["D3"] = kwargs["project_name"]
+
+    ws["I86"] = kwargs["engagement_fee"]
+    ws["I86"] = kwargs["arrangement_fee"]
+
     ws["E24"] = kwargs["wht_interest"]
     ws["E25"] = kwargs["agent_fee"]
     ws["E48"] = kwargs["SICAV_costs"]
