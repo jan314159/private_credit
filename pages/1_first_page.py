@@ -98,7 +98,7 @@ with loan_outputs:
             "GC": st.column_config.NumberColumn(format="localized", step=1)
         })
 
-
+#
 interest_due_col = "Interest Due (net)"
 interest_paid_col = "Interest Paid"
 principal_paid_col = "Principal Paid"
