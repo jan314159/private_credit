@@ -5,9 +5,13 @@ import pandas as pd
 import streamlit as st
 
 from utils import create_all_tables, save_model
+from state import keep_inputs
 
 # 1. SETUP
 st.set_page_config(layout="wide", page_title="Assumptions & Outcome")
+
+# Keeps every input (on this and the other pages) when switching pages
+keep_inputs()
 
 # 2. SAFETY CHECK
 # This page relies on the calculation from the previous step (Loan Terms).
@@ -26,16 +30,15 @@ with inputs_outcome_col:
     # streamlined inputs using session_state keys directly
     # We keep the inputs as percentages (0-100) for UI, divide by 100 for logic.
 
-    st.session_state.project_name = st.text_input("Project name", value=st.session_state.get("project_name", "n/a"))
+    st.text_input("Project name", key="project_name")
 
-    st.session_state.wht_input = st.number_input("WHT (%)", step=0.5, value=st.session_state.get("wht_input", 0.0), format="%.2f")
-    wht = st.session_state.wht_input / 100
+    wht = st.number_input("WHT (%)", step=0.5, format="%.2f", key="wht_input") / 100
 
-    agent_fee_input = st.number_input("Agent fee (%)", step=0.5, value=0.0, format="%.2f", key="in_agent_fee")
+    agent_fee_input = st.number_input("Agent fee (%)", step=0.5, format="%.2f", key="in_agent_fee")
     agent_fee = agent_fee_input / 100
 
     # SICAV: Input is Annual %, Logic requires Monthly %
-    sicav_input = st.number_input("Sicav costs p.a. (%)", step=0.25, value=3.0, format="%.2f", key="in_sicav")
+    sicav_input = st.number_input("Sicav costs p.a. (%)", step=0.25, format="%.2f", key="in_sicav")
     sicav_costs_monthly = (sicav_input / 100) / 12
 
     # annual_rate_input = st.number_input("Annual interest rate (%)", step=0.5, value=5.0, format="%.2f",
@@ -45,7 +48,7 @@ with inputs_outcome_col:
     # tax_rate_input = st.number_input("Tax rate (%)", step=0.25, value=25.0, format="%.2f", key="in_tax_rate")
     # tax_rate = tax_rate_input / 100
 
-    other_costs = st.number_input("Other Costs", step=1000, value=0, format="%d", key="in_other_costs")
+    other_costs = st.number_input("Other Costs", step=1000, format="%d", key="in_other_costs")
 
     # Loan provided comes from previous step, but we allow override or view here
     # Using a separate key to avoid conflict if you go back to the first script
@@ -167,8 +170,8 @@ sicav_col.dataframe(
 
 with col_1:
     st.header(":blue[APS fees]")
-    engagement_fee = st.number_input("Engagement fee", step=1000, value=0, format="%d", key="eng_fee")
-    arrangement_fee = st.number_input("Arrangement Fee", step=1000, value=0, format="%d", key="arr_fee")
+    engagement_fee = st.number_input("Engagement fee", step=1000, format="%d", key="eng_fee")
+    arrangement_fee = st.number_input("Arrangement Fee", step=1000, format="%d", key="arr_fee")
 
     if not cf.empty:
         funding_year = st.session_state.funding_date.year
