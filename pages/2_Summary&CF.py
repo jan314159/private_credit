@@ -1,12 +1,12 @@
+import io
+from datetime import date
+
 import pandas as pd
 import streamlit as st
-import io
-from utils import *  # Assuming create_all_tables, save_model are here
+
+from utils import create_all_tables, save_model
 
 # 1. SETUP
-# Avoid Setting chained_assignment globally if possible, but keep if legacy utils need it
-pd.options.mode.chained_assignment = None
-
 st.set_page_config(layout="wide", page_title="Assumptions & Outcome")
 
 # 2. SAFETY CHECK
@@ -212,7 +212,8 @@ with col_2:
 # which is usually the slowest part of these apps.
 
 @st.cache_data(show_spinner=False)
-def convert_df_to_excel(f_amt, f_date, m_date, rate, rep_period, int_df, prin_df, wht, agent, sicav):
+def convert_df_to_excel(f_amt, f_date, m_date, rate, rep_period, int_df, prin_df, wht, agent, sicav,
+                        project_name, eng_fee, arr_fee):
     # Calls your original utils function
     wb = save_model(
         "private_credit_template",
@@ -226,9 +227,9 @@ def convert_df_to_excel(f_amt, f_date, m_date, rate, rep_period, int_df, prin_df
         wht_interest=wht,
         agent_fee=agent,
         SICAV_costs=sicav,
-        project_name=st.session_state.project_name,
-        engagement_fee=engagement_fee,
-        arrangement_fee=arrangement_fee
+        project_name=project_name,
+        engagement_fee=eng_fee,
+        arrangement_fee=arr_fee
     )
     buffer = io.BytesIO()
     wb.save(buffer)
@@ -242,12 +243,15 @@ if "funding_amount" in st.session_state:
         st.session_state.funding_date,
         st.session_state.maturity_date,
         st.session_state.get("interest_rate", 0),  # Handle potential missing key safety
-        st.session_state.get("interest_repayment", "monthly"),
+        st.session_state.get("repayment_type", "lump-sum"),
         st.session_state.interest_df,
         st.session_state.principal_df,
         wht,
         agent_fee,
-        sicav_costs_monthly  # Note: passing the calculated monthly cost
+        sicav_costs_monthly,  # Note: passing the calculated monthly cost
+        st.session_state.project_name,
+        engagement_fee,
+        arrangement_fee
     )
 
     st.sidebar.download_button(

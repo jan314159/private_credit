@@ -1,33 +1,24 @@
-import pandas as pd
-from datetime import date
-from dateutil.relativedelta import relativedelta
-
+from datetime import date, datetime
 from typing import Optional
 
-import numpy_financial as npf
+import numpy as np
+import pandas as pd
+from dateutil.relativedelta import relativedelta
+from openpyxl import load_workbook
 from pyxirr import xirr
 
-from openpyxl import load_workbook
 
-pd.options.mode.chained_assignment = None
+PERIOD_MONTHS = {"annually": 12, "semiannually": 6, "quarterly": 3, "monthly": 1}
+
 
 def end_of_month(date_input: date, no_of_months=0):
     new_date = date(date_input.year, date_input.month, 1)
-    out = new_date + relativedelta(months=no_of_months + 1) - relativedelta(days=1)
-    return out
+    return new_date + relativedelta(months=no_of_months + 1) - relativedelta(days=1)
 
 
 def make_df_with_interest_rows(data_list, interest=True, blank_rows=0):
-    # Create DF from list
-    df = pd.DataFrame({"Date": data_list})
+    df = pd.DataFrame({"Date": data_list, "Amount*": "interest" if interest else "bullet"})
 
-    # Add constant column
-    if interest:
-        df["Amount*"] = "interest"
-    else:
-        df["Amount*"] = "bullet"
-
-    # Add blank rows if requested
     if blank_rows > 0:
         blank_df = pd.DataFrame({"Date": [None] * blank_rows, "Amount*": [None] * blank_rows})
         df = pd.concat([df, blank_df], ignore_index=True)
@@ -35,23 +26,11 @@ def make_df_with_interest_rows(data_list, interest=True, blank_rows=0):
     return df
 
 
-def get_period(interest_repayment_period:str) -> Optional[int]:
-    if interest_repayment_period == "annually":
-        ret = 12
-    elif interest_repayment_period == "semiannually":
-        ret = 6
-    elif interest_repayment_period == "quarterly":
-        ret = 3
-    elif interest_repayment_period == "monthly":
-        ret = 1
-    else:
-        ret = None
-
-    return ret
+def get_period(interest_repayment_period: str) -> Optional[int]:
+    return PERIOD_MONTHS.get(interest_repayment_period)
 
 
 def create_interest_payment_table(funding_date: date, maturity_date: date, payback_period: str) -> pd.DataFrame:
-
     interest_date = funding_date
     interests = []
 
@@ -63,184 +42,177 @@ def create_interest_payment_table(funding_date: date, maturity_date: date, payba
 
     interests.append(maturity_date)
 
-    interests_df = make_df_with_interest_rows(interests, blank_rows=max(0, 12-len(interests)))
-    return interests_df
+    return make_df_with_interest_rows(interests, blank_rows=max(0, 12 - len(interests)))
 
 
 def create_principal_payment_table(maturity_date: date):
-    return make_df_with_interest_rows([maturity_date], interest=False ,blank_rows=11)
+    return make_df_with_interest_rows([maturity_date], interest=False, blank_rows=11)
+
+
+def _schedule_lookup(schedule_df: pd.DataFrame) -> dict:
+    """Map month-end date -> amount for the filled rows of an interest/principal schedule.
+
+    Dates are snapped to their month end so they line up with the monthly grid
+    (e.g. a maturity on the 15th is paid in that month). First entry per month wins.
+    """
+    lookup = {}
+    for d, amount in zip(schedule_df["Date"], schedule_df["Amount*"]):
+        if d is None or amount is None or pd.isna(d) or pd.isna(amount) or amount == "":
+            continue
+        if isinstance(d, (pd.Timestamp, datetime)):
+            d = d.date()
+        elif isinstance(d, str):
+            d = pd.Timestamp(d).date()
+        lookup.setdefault(end_of_month(d), amount)
+    return lookup
 
 
 def get_repayment_table(principal, interest, interest_df, principal_df, maturity_date, funding_date):
+    interest_lookup = _schedule_lookup(interest_df)
+    principal_lookup = _schedule_lookup(principal_df)
+
+    first_month = end_of_month(funding_date)
+    last_month = end_of_month(maturity_date)
 
     dates = []
-    principal_left = principal
-    principals_left = []
-    interest_left = 0
-    interests_left = []
-
     repayment_interest = []
+    principals_repayment = []
     interests_due = []
     interests_paid = []
-
+    interests_left = []
     principals_paid = []
-    principals_repayment = []
+    principals_left = []
 
-    current_month = end_of_month(funding_date)
+    principal_left = principal
+    interest_left = 0
+    current_month = first_month
 
-    while current_month <= end_of_month(maturity_date):
-
-        if current_month == end_of_month(funding_date):
-            principals_left.append(principal_left)
-            interests_left.append(interest_left)
-
+    while current_month <= last_month:
+        if current_month == first_month:
             repayment_interest.append(None)
+            principals_repayment.append(None)
             interests_due.append(None)
             interests_paid.append(None)
-
             principals_paid.append(None)
-            principals_repayment.append(None)
-
         else:
-            if len(dates) == 1:
-                interest_due = principals_left[-1] * interest * (current_month.day + 1) / 360
-            else:
-                interest_due = principals_left[-1] * interest * current_month.day / 360
+            # first accrual month counts one extra day (funding day)
+            days = current_month.day + 1 if len(dates) == 1 else current_month.day
+            interest_due = principal_left * interest * days / 360
             interests_due.append(interest_due)
 
-            if current_month in interest_df["Date"].to_list():
-                interest_repayment = interest_df[interest_df["Date"] == current_month]["Amount*"].values[0]
-                repayment_interest.append(interest_repayment)
-
-                if interest_repayment == "interest":
-                    interest_paid = interest_due + interests_left[-1]
-                    interests_paid.append(interest_paid)
-                    interests_left.append(0)
-
-                else:
-                    interest_paid = min((interest_due + interests_left[-1]), int(interest_repayment))
-                    interests_paid.append(interest_paid)
-                    interests_left.append(interest_due + interests_left[-1] - interests_paid[-1])
-
-            else:
+            interest_repayment = interest_lookup.get(current_month)
+            if interest_repayment is None:
                 repayment_interest.append("n/a")
-                interests_left.append(interests_left[-1] + interest_due)
-                interests_paid.append(0)
-
-            if current_month in principal_df["Date"].to_list():
-                principal_repayment = principal_df[principal_df["Date"] == current_month]["Amount*"].values[0]
-                principals_repayment.append(principal_repayment)
-
-                if principal_repayment == "bullet":
-                    principals_paid.append(principals_left[-1])
-                    principals_left.append(0)
-
-                else:
-                    principals_paid.append(min(int(principal_repayment), principals_left[-1]))
-                    principals_left.append(principals_left[-1] - principals_paid[-1])
+                interest_paid = 0
+                interest_left += interest_due
             else:
-                principals_paid.append(0)
-                principals_left.append(principals_left[-1])
+                repayment_interest.append(interest_repayment)
+                if interest_repayment == "interest":
+                    interest_paid = interest_due + interest_left
+                else:
+                    interest_paid = min(interest_due + interest_left, float(interest_repayment))
+                interest_left = interest_due + interest_left - interest_paid
+            interests_paid.append(interest_paid)
+
+            principal_repayment = principal_lookup.get(current_month)
+            if principal_repayment is None:
                 principals_repayment.append("n/a")
+                principal_paid = 0
+            else:
+                principals_repayment.append(principal_repayment)
+                if principal_repayment == "bullet":
+                    principal_paid = principal_left
+                else:
+                    principal_paid = min(float(principal_repayment), principal_left)
+            principals_paid.append(principal_paid)
+            principal_left -= principal_paid
+
+        interests_left.append(interest_left)
+        principals_left.append(principal_left)
         dates.append(current_month)
         current_month = end_of_month(current_month, 1)
 
-        gc_df = pd.DataFrame({
-            "Month (calendar)": dates,
-            "Repayment Interest": repayment_interest,
-            "Repayment PV": principals_repayment,
-            "Interest Due (net)": interests_due,
-            "Interest Paid": interests_paid,
-            "Interest Left": interests_left,
-            "Principal Paid": principals_paid,
-            "Principal Left":principals_left })
-
-        gc_df["GC"] = gc_df["Interest Paid"] + gc_df["Principal Paid"]
+    gc_df = pd.DataFrame({
+        "Month (calendar)": dates,
+        "Repayment Interest": repayment_interest,
+        "Repayment PV": principals_repayment,
+        "Interest Due (net)": pd.array(interests_due, dtype="float64"),
+        "Interest Paid": pd.array(interests_paid, dtype="float64"),
+        "Interest Left": pd.array(interests_left, dtype="float64"),
+        "Principal Paid": pd.array(principals_paid, dtype="float64"),
+        "Principal Left": pd.array(principals_left, dtype="float64"),
+    })
+    gc_df["GC"] = gc_df["Interest Paid"] + gc_df["Principal Paid"]
 
     return gc_df
 
 
-def create_cf_table(gc, wht, agent_fee, total_investment, Annual_Interest_Rate):
-    Daily_Interest_Rate = (1 + Annual_Interest_Rate) ** (1 / 365) - 1
+def _day_counts(dates: pd.Series) -> np.ndarray:
+    """Days elapsed since the previous row (first element is 0)."""
+    return pd.to_datetime(dates).diff().dt.days.fillna(0).to_numpy()
 
-    cf = gc[["Month (calendar)", "Interest Paid", "Principal Paid"]]
+
+def _amortize(dates: pd.Series, flows: np.ndarray, rate: float, opening: float, zero_below: float = 0.0):
+    """Roll an opening balance forward at `rate` p.a., amortizing it by `flows[1:]`.
+
+    Returns (principal BoP, interest, amortization, principal EoP); first row is the opening position.
+    A previous EoP with |value| < zero_below is treated as fully repaid.
+    """
+    n = len(flows)
+    growth = (1 + rate) ** (_day_counts(dates) / 365) - 1
+
+    bop = np.full(n, np.nan)
+    interest = np.full(n, np.nan)
+    amortization = np.full(n, np.nan)
+    eop = np.full(n, np.nan)
+    eop[0] = opening
+
+    for i in range(1, n):
+        prev = eop[i - 1]
+        bop[i] = 0.0 if abs(prev) < zero_below else prev
+        interest[i] = bop[i] * growth[i]
+        amortization[i] = flows[i] - interest[i]
+        eop[i] = bop[i] - amortization[i]
+
+    return bop, interest, amortization, eop
+
+
+def create_cf_table(gc, wht, agent_fee, total_investment, Annual_Interest_Rate):
+    cf = gc[["Month (calendar)", "Interest Paid", "Principal Paid"]].copy()
     cf["WHT on Loan Interest"] = -wht * cf["Interest Paid"]
     cf["GC after costs after cap after cuts"] = cf["Interest Paid"] + cf["Principal Paid"] + cf["WHT on Loan Interest"]
     cf["Agent Fee"] = agent_fee * cf["GC after costs after cap after cuts"]
     cf["Net Cash flow before tax"] = cf["GC after costs after cap after cuts"] - cf["Agent Fee"]
+    cf.loc[cf.index[0], "Net Cash flow before tax"] = -total_investment
 
-    cf["Net Cash flow before tax"].iloc[0] = -total_investment
+    net_cf = cf["Net Cash flow before tax"]
+    cf["Cumulative Net CF"] = net_cf.cumsum()
+    multiple = (net_cf.cumsum() - net_cf.iloc[0]) / total_investment
+    multiple.iloc[0] = np.nan
+    cf["Net multiple for Success fee"] = multiple
 
-    # --- cumulative net cf ---
+    # --- loan waterfall: net CF split into interest / principal / variable interest ---
+    n = len(cf)
+    net = net_cf.to_numpy(dtype=float)
+    daily_rate = (1 + Annual_Interest_Rate) ** (1 / 365) - 1
+    growth = (1 + daily_rate) ** _day_counts(cf["Month (calendar)"]) - 1
 
-    Cumulative_Net_CF = []
-    Net_multiple_for_Success_fee = []
-    Cumulative_Net_CF_tech = 0
+    interest_due = np.full(n, np.nan)
+    interest_paid = np.full(n, np.nan)
+    interest_left = np.full(n, np.nan)
+    principal_paid = np.full(n, np.nan)
+    principal_left = np.full(n, np.nan)
+    variable_interest = np.full(n, np.nan)
+    interest_left[0] = 0
+    principal_left[0] = total_investment
 
-    for i, row in cf.iterrows():
-        Cumulative_Net_CF_tech += row["Net Cash flow before tax"]
-        Cumulative_Net_CF.append(Cumulative_Net_CF_tech)
-
-        if i == 0:
-            Net_multiple_for_Success_fee.append(None)
-        else:
-            Net_multiple_for_Success_fee.append(cf["Net Cash flow before tax"][1:(i + 1)].sum() / total_investment)
-
-    cf["Cumulative Net CF"] = Cumulative_Net_CF
-    cf["Net multiple for Success fee"] = Net_multiple_for_Success_fee
-
-    # --- rest ---
-
-    interest_due = []
-    interest_due_tech = 0
-
-    interest_paid = []
-    interest_paid_tech = 0
-
-    interest_left = []
-    interest_left_tech = 0
-
-    principal_paid = []
-    principal_paid_tech = 0
-
-    principal_left = []
-    principal_left_tech = total_investment
-
-    variable_interest = []
-    variable_interest_tech = 0
-
-    tax_base_cit = []
-    tax_base_cit_tech = 0
-
-    for i, row in cf.iterrows():
-        if i == 0:
-            interest_due.append(None)
-            interest_paid.append(None)
-            interest_left.append(interest_left_tech)
-            principal_paid.append(None)
-            principal_left.append(principal_left_tech)
-            variable_interest.append(None)
-            tax_base_cit.append(None)
-
-        else:
-            interest_due_tech = principal_left[i - 1] * ((1 + Daily_Interest_Rate) ** (
-                (cf["Month (calendar)"][i] - cf["Month (calendar)"][i - 1]).days) - 1)
-            interest_due.append(interest_due_tech)
-
-            interest_paid_tech = max(min(row["Net Cash flow before tax"], interest_due_tech + interest_left[i - 1]), 0)
-            interest_paid.append(interest_paid_tech)
-
-            interest_left_tech = interest_left[i - 1] + interest_due_tech - interest_paid_tech
-            interest_left.append(interest_left_tech)
-
-            principal_paid_tech = min(row["Net Cash flow before tax"] - interest_paid_tech, principal_left[i - 1])
-            principal_paid.append(principal_paid_tech)
-
-            principal_left_tech = principal_left[i - 1] - principal_paid_tech
-            principal_left.append(principal_left_tech)
-
-            variable_interest_tech = row["Net Cash flow before tax"] - principal_paid_tech - interest_paid_tech
-            variable_interest.append(variable_interest_tech)
+    for i in range(1, n):
+        interest_due[i] = principal_left[i - 1] * growth[i]
+        interest_paid[i] = max(min(net[i], interest_due[i] + interest_left[i - 1]), 0)
+        interest_left[i] = interest_left[i - 1] + interest_due[i] - interest_paid[i]
+        principal_paid[i] = min(net[i] - interest_paid[i], principal_left[i - 1])
+        principal_left[i] = principal_left[i - 1] - principal_paid[i]
+        variable_interest[i] = net[i] - principal_paid[i] - interest_paid[i]
 
     cf["Interest Due (net)"] = interest_due
     cf["Interest Paid - net"] = interest_paid
@@ -254,135 +226,72 @@ def create_cf_table(gc, wht, agent_fee, total_investment, Annual_Interest_Rate):
 
 def create_npv_table(cf, total_investment):
     npv_local_spv = cf[["Month (calendar)", "GC after costs after cap after cuts"]].rename(
-        {"GC after costs after cap after cuts": "TECH for gross IRR"}, axis=1)
+        columns={"GC after costs after cap after cuts": "TECH for gross IRR"})
+    npv_local_spv.loc[npv_local_spv.index[0], "TECH for gross IRR"] = -total_investment
 
-    npv_local_spv["TECH for gross IRR"].iloc[0] = -total_investment
-    rate = xirr(npv_local_spv)
+    rate = xirr(npv_local_spv["Month (calendar)"], npv_local_spv["TECH for gross IRR"])
 
-    Daily_IRR = (1 + rate) ** (1 / 365) - 1
+    bop, interest, amortization, eop = _amortize(
+        npv_local_spv["Month (calendar)"], npv_local_spv["TECH for gross IRR"].to_numpy(dtype=float),
+        rate, total_investment, zero_below=1)
 
-    Principal_BoP = []
-    Principal_BoP_tech = 0
-
-    Interest = []
-    Interest_tech = 0
-
-    Amortization = []
-    Amortization_tech = 0
-
-    Principal_EoP_NPV = []
-    Principal_EoP_NPV_tech = total_investment
-
-    for i, row in npv_local_spv.iterrows():
-        if i == 0:
-            Principal_BoP.append(None)
-            Interest.append(None)
-            Amortization.append(None)
-            Principal_EoP_NPV.append(Principal_EoP_NPV_tech)
-
-        else:
-            if abs(Principal_EoP_NPV[i - 1]) < 1:
-                Principal_BoP_tech = 0
-            else:
-                Principal_BoP_tech = Principal_EoP_NPV[i - 1]
-
-            Principal_BoP.append(Principal_BoP_tech)
-
-            Interest_tech = Principal_BoP_tech * ((1 + Daily_IRR) ** (
-                (npv_local_spv["Month (calendar)"][i] - npv_local_spv["Month (calendar)"][i - 1]).days) - 1)
-            Interest.append(Interest_tech)
-
-            Amortization_tech = row["TECH for gross IRR"] - Interest_tech
-            Amortization.append(Amortization_tech)
-
-            Principal_EoP_NPV_tech = Principal_BoP_tech - Amortization_tech
-            Principal_EoP_NPV.append(Principal_EoP_NPV_tech)
-
-    npv_local_spv["Principal BoP"] = Principal_BoP
-    npv_local_spv["Interest"] = Interest
-    npv_local_spv["Amortization"] = Amortization
-    npv_local_spv["Principal EoP/NPV"] = Principal_EoP_NPV
+    npv_local_spv["Principal BoP"] = bop
+    npv_local_spv["Interest"] = interest
+    npv_local_spv["Amortization"] = amortization
+    npv_local_spv["Principal EoP/NPV"] = eop
 
     return npv_local_spv
 
 
-def update_cf(cf, npv_local, total_investment, tax_rate, sicav_costs_monthly):
-    cf["Tax base CIT"] = npv_local["Interest"] - cf["Agent Fee"] - cf["Interest Due (net)"]
+def _running_irr(dates, flows) -> list:
+    """XIRR of every prefix of the cash flows (-1 where it is undefined), rounded to 4 dp."""
+    dates = list(dates)
+    flows = np.asarray(flows, dtype=float)
+    out = []
+    has_positive = False
+    for i in range(len(flows)):
+        has_positive = has_positive or flows[i] > 0
+        irr = None
+        if has_positive:
+            try:
+                irr = xirr(dates[:i + 1], flows[:i + 1])
+            except Exception:
+                irr = None
+        out.append(round(irr, 4) if irr is not None else -1)
+    return out
 
+
+def update_cf(cf, npv_local, total_investment, tax_rate, sicav_costs_monthly):
+    cf = cf.copy()
+    first = cf.index[0]
+
+    cf["Tax base CIT"] = npv_local["Interest"] - cf["Agent Fee"] - cf["Interest Due (net)"]
     cf["Income tax (CIT)"] = cf["Tax base CIT"] * tax_rate
     cf["Net CF SICAV incoming"] = cf["Net Cash flow before tax"] - cf["Income tax (CIT)"]
+    cf.loc[first, "Net CF SICAV incoming"] = -total_investment
 
-    cf["Net CF SICAV incoming"][0] = -total_investment
+    sicav_npv = cf[["Month (calendar)", "Net CF SICAV incoming"]].copy()
+    rate_sicav = xirr(sicav_npv["Month (calendar)"], sicav_npv["Net CF SICAV incoming"])
 
-    rate_sicav = xirr(cf[["Month (calendar)", "Net CF SICAV incoming"]])
-    daily_rate_sicav = (1 + rate_sicav) ** (1 / 365) - 1
+    bop, interest, amortization, eop = _amortize(
+        sicav_npv["Month (calendar)"], sicav_npv["Net CF SICAV incoming"].to_numpy(dtype=float),
+        rate_sicav, total_investment)
 
-    sicav_npv = cf[["Month (calendar)", "Net CF SICAV incoming"]]
-
-    principal_bob_sicav = []
-    principal_bob_sicav_tech = 0
-
-    interest_sicav = []
-    interest_sicav_tech = 0
-
-    amortization_sicav = []
-    amortization_sicav_tech = 0
-
-    principal_EoP_NPV_sicav = []
-    principal_EoP_NPV_sicav_tech = 0
-
-    for i, row in sicav_npv.iterrows():
-        if i == 0:
-            principal_bob_sicav.append(None)
-            interest_sicav.append(None)
-            amortization_sicav.append(None)
-            principal_EoP_NPV_sicav.append(total_investment)
-
-        else:
-            if abs(principal_EoP_NPV_sicav[-1]) < 0:
-                principal_bob_sicav_tech = 0
-            else:
-                principal_bob_sicav_tech = principal_EoP_NPV_sicav[-1]
-
-            principal_bob_sicav.append(principal_bob_sicav_tech)
-            interest_sicav_tech = principal_bob_sicav_tech * ((1 + daily_rate_sicav) ** (
-                (sicav_npv["Month (calendar)"][i] - sicav_npv["Month (calendar)"][i - 1]).days) - 1)
-            amortization_sicav_tech = row["Net CF SICAV incoming"] - interest_sicav_tech
-
-            interest_sicav.append(interest_sicav_tech)
-            amortization_sicav.append(amortization_sicav_tech)
-
-            principal_EoP_NPV_sicav_tech = principal_bob_sicav_tech - amortization_sicav_tech
-            principal_EoP_NPV_sicav.append(principal_EoP_NPV_sicav_tech)
-
-    sicav_npv["Principal BoP"] = principal_bob_sicav
-    sicav_npv["Interest"] = interest_sicav
-    sicav_npv["Amortization"] = amortization_sicav
-    sicav_npv["Principal EoP/NPV"] = principal_EoP_NPV_sicav
+    sicav_npv["Principal BoP"] = bop
+    sicav_npv["Interest"] = interest
+    sicav_npv["Amortization"] = amortization
+    sicav_npv["Principal EoP/NPV"] = eop
 
     cf["SICAV Costs"] = sicav_costs_monthly * sicav_npv["Principal BoP"]
     cf["Net CF after all taxes"] = cf["Net CF SICAV incoming"] - cf["SICAV Costs"]
+    cf.loc[first, "Net CF after all taxes"] = -total_investment
 
-    cf["Net CF after all taxes"][0] = -total_investment
-
-    irr_sicav = []
-    irr_sicav_tech = 0
-
-    for i, row in cf.iterrows():
-        try:
-            irr_sicav_tech = xirr(cf[["Month (calendar)", "Net CF after all taxes"]][:(i + 1)])
-            if irr_sicav_tech is None:
-                irr_sicav_tech = -1
-        except:
-            irr_sicav_tech = -1
-
-        irr_sicav.append(round(irr_sicav_tech, 4))
-
-    cf["IRR"] = irr_sicav
-    cf["Cumulative Net CF after all taxes"] = cf['Net CF after all taxes'].cumsum()
+    cf["IRR"] = _running_irr(cf["Month (calendar)"], cf["Net CF after all taxes"])
+    cf["Cumulative Net CF after all taxes"] = cf["Net CF after all taxes"].cumsum()
     cf["Net break even point // TEX"] = (cf["IRR"] > 0).astype(int)
 
     return cf, sicav_npv
+
 
 def create_all_tables(gc, wht, agent_fee, total_investment, Annual_Interest_Rate, tax_rate, sicav_costs_monthly):
     cf = create_cf_table(gc=gc, wht=wht, agent_fee=agent_fee, total_investment=total_investment, Annual_Interest_Rate=Annual_Interest_Rate)
@@ -390,6 +299,7 @@ def create_all_tables(gc, wht, agent_fee, total_investment, Annual_Interest_Rate
     cf, sicav_npv = update_cf(cf=cf, npv_local=npv_table, total_investment=total_investment, tax_rate=tax_rate, sicav_costs_monthly=sicav_costs_monthly)
 
     return cf, npv_table, sicav_npv
+
 
 def save_model(input_file_name, **kwargs):
     wb = load_workbook(filename=f"{input_file_name}.xlsx")
@@ -421,4 +331,3 @@ def save_model(input_file_name, **kwargs):
     ws["E48"] = kwargs["SICAV_costs"]
 
     return wb
-
