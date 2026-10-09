@@ -38,7 +38,7 @@ if base is None or base["xirr"] is None:
 # ---------------------------------------------------------------- heatmap
 st.header(":blue[XIRR sensitivity]")
 st.caption("After-tax XIRR when the loan interest rate and one other assumption change. "
-           "Blue is better than the comparison XIRR, red is worse; the outlined cell is the current deal.")
+           "Teal is better than the comparison XIRR, red is worse; the outlined cell is the current deal.")
 
 # Second axis: label -> (session key holding the % input, model input it drives, default step in %-points)
 DRIVERS = {

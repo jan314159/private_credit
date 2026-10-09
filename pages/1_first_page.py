@@ -135,7 +135,7 @@ with loan_outputs:
                     chart_data = repayment_df["Interest Due (net)"].iloc[1:]
 
                     st.metric("Interest Due", f"{sums['Interest Due (net)']:,.0f}", border=True)
-                    st.area_chart(chart_data, height=100, color="#E83E33")
+                    st.area_chart(chart_data, height=100, color="#468E99")
 
                     st.metric("Interest Paid", f"{sums['Interest Paid']:,.0f}", border=True)
                     st.metric("Principal Paid", f"{sums['Principal Paid']:,.0f}", border=True)

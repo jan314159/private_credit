@@ -3,11 +3,12 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-# Validated categorical/diverging steps, picked per Streamlit theme (light, dark)
+# APS corporate colors (Color1 red, Color2/3 teal), checked for contrast and colorblind separation.
+# "main" and "second" are the series colors; "pos" is the strong (better) end of the heatmap.
 _PALETTE = {
-    "light": {"blue": "#2a78d6", "orange": "#eb6834", "red": "#e34948", "ink": "#0b0b0b",
+    "light": {"main": "#468e99", "second": "#e83e33", "red": "#e83e33", "pos": "#005864", "ink": "#0b0b0b",
               "ink2": "#52514e", "mid": "#f0efec", "rule": "#c3c2b7", "bg": "#ffffff"},
-    "dark": {"blue": "#3987e5", "orange": "#d95926", "red": "#e66767", "ink": "#ffffff",
+    "dark": {"main": "#468e99", "second": "#e83e33", "red": "#e83e33", "pos": "#468e99", "ink": "#ffffff",
              "ink2": "#c3c2b7", "mid": "#383835", "rule": "#383835", "bg": "#0e1117"},
 }
 
@@ -38,8 +39,8 @@ def cumulative_cf(cf, payback_month):
         y=alt.Y("Cumulative:Q", title="Cumulative net cash flow", axis=alt.Axis(format="~s")),
     )
     layers = [
-        base.mark_area(color=c["blue"], opacity=0.1, interpolate="step-after"),
-        base.mark_line(color=c["blue"], strokeWidth=2, interpolate="step-after"),
+        base.mark_area(color=c["main"], opacity=0.1, interpolate="step-after"),
+        base.mark_line(color=c["main"], strokeWidth=2, interpolate="step-after"),
         alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color=c["rule"], strokeWidth=1).encode(y="y:Q"),
         base.mark_rule(color=c["ink2"], strokeWidth=1).encode(
             opacity=alt.condition(hover, alt.value(1), alt.value(0)),
@@ -52,7 +53,7 @@ def cumulative_cf(cf, payback_month):
         point = data.iloc[[payback_month]].assign(Label="Payback")
         dot = alt.Chart(point).encode(x="Month:T", y="Cumulative:Q")
         layers += [
-            dot.mark_point(filled=True, size=90, color=c["blue"], stroke=c["mid"], strokeWidth=2, opacity=1),
+            dot.mark_point(filled=True, size=90, color=c["main"], stroke=c["mid"], strokeWidth=2, opacity=1),
             dot.mark_text(align="right", dx=-10, dy=-4, color=c["ink2"]).encode(text="Label:N"),
         ]
     return alt.layer(*layers).properties(height=HEIGHT)
@@ -65,7 +66,7 @@ def waterfall(steps):
     data["Top"] = data[["Start", "End"]].max(axis=1)
     x = alt.X("Step:N", sort=alt.SortField("Order"), title=None, axis=alt.Axis(labelAngle=0))
     color = alt.Color("Type:N", title=None,
-                      scale=alt.Scale(domain=["Inflow", "Deduction", "Result"], range=[c["blue"], c["red"], c["ink2"]]),
+                      scale=alt.Scale(domain=["Inflow", "Deduction", "Result"], range=[c["main"], c["red"], c["ink2"]]),
                       legend=alt.Legend(orient="top"))
     bars = alt.Chart(data).mark_bar(width=alt.RelativeBandSize(0.6), cornerRadius=2).encode(
         x=x,
@@ -98,16 +99,16 @@ def outstanding_balance(gc):
     legend = alt.Chart(long).mark_line(strokeWidth=2).encode(
         x=x, y=alt.Y("value:Q", stack=True, title="Outstanding", axis=y_axis),
         color=alt.Color("Part:N", title=None, sort=["Principal", "Accrued interest"],
-                        scale=alt.Scale(domain=["Principal", "Accrued interest"], range=[c["blue"], c["orange"]]),
+                        scale=alt.Scale(domain=["Principal", "Accrued interest"], range=[c["main"], c["second"]]),
                         legend=alt.Legend(orient="top")),
         opacity=alt.value(0),
     )
     layers = [
         legend,
-        base.mark_area(color=c["blue"], opacity=0.1, interpolate="step-after").encode(y=alt.Y("Principal:Q", axis=y_axis)),
-        base.mark_line(color=c["blue"], strokeWidth=2, interpolate="step-after").encode(y="Principal:Q"),
-        base.mark_area(color=c["orange"], opacity=0.15, interpolate="step-after").encode(y="Principal:Q", y2="Total:Q"),
-        base.mark_line(color=c["orange"], strokeWidth=2, interpolate="step-after").encode(y="Total:Q"),
+        base.mark_area(color=c["main"], opacity=0.1, interpolate="step-after").encode(y=alt.Y("Principal:Q", axis=y_axis)),
+        base.mark_line(color=c["main"], strokeWidth=2, interpolate="step-after").encode(y="Principal:Q"),
+        base.mark_area(color=c["second"], opacity=0.15, interpolate="step-after").encode(y="Principal:Q", y2="Total:Q"),
+        base.mark_line(color=c["second"], strokeWidth=2, interpolate="step-after").encode(y="Total:Q"),
         base.mark_rule(color=c["ink2"], strokeWidth=1).encode(
             opacity=alt.condition(hover, alt.value(1), alt.value(0)),
             tooltip=[alt.Tooltip("Month:T", format="%b %Y"),
@@ -128,7 +129,7 @@ def interest_by_month(gc):
     }).iloc[1:]
     data = data[data["Interest"] > 0]
     return alt.Chart(data).mark_bar(width=alt.RelativeBandSize(0.7), cornerRadiusTopLeft=4, cornerRadiusTopRight=4,
-                                    color=c["blue"]).encode(
+                                    color=c["main"]).encode(
         x=alt.X("yearmonth(Month):T", title=None, axis=alt.Axis(format="%b %Y")),
         y=alt.Y("Interest:Q", title="Interest collected", axis=alt.Axis(format="~s")),
         tooltip=[alt.Tooltip("yearmonth(Month):T", format="%b %Y", title="Month"),
@@ -145,7 +146,7 @@ def fees_by_year(fees):
         x=alt.X("Year:O", title=None, axis=alt.Axis(labelAngle=0)),
         y=alt.Y("Amount:Q", stack=True, title="Fees", axis=alt.Axis(format="~s")),
         color=alt.Color("Fee:N", title=None, sort=["Agent fee", "Upfront fees"],
-                        scale=alt.Scale(domain=["Agent fee", "Upfront fees"], range=[c["blue"], c["orange"]]),
+                        scale=alt.Scale(domain=["Agent fee", "Upfront fees"], range=[c["main"], c["second"]]),
                         legend=alt.Legend(orient="top")),
         order=alt.Order("Fee:N"),
         tooltip=["Year:O", "Fee:N", alt.Tooltip("Amount:Q", format=MONEY)],
@@ -166,7 +167,7 @@ def xirr_heatmap(grid, x_title, y_title, reference, x_order, y_order):
         x=x, y=y,
         color=alt.Color("XIRR:Q", title="XIRR",
                         scale=alt.Scale(domain=[reference - spread, reference, reference + spread],
-                                        range=[c["red"], c["mid"], c["blue"]], interpolate="rgb"),
+                                        range=[c["red"], c["mid"], c["pos"]], interpolate="rgb"),
                         legend=alt.Legend(format=".1%", orient="right")),
         tooltip=[alt.Tooltip("X:O", title=x_title), alt.Tooltip("Y:O", title=y_title),
                  alt.Tooltip("XIRR:Q", format=".2%")],
@@ -184,7 +185,7 @@ def scenario_bars(results):
     c = palette()
     data = results.dropna(subset=["XIRR"]).assign(Label=lambda d: d["XIRR"].map(lambda v: f"{v:.2%}"))
     y = alt.Y("Scenario:N", sort=None, title=None, axis=alt.Axis(labelLimit=300))
-    bars = alt.Chart(data).mark_bar(height=alt.RelativeBandSize(0.6), cornerRadiusEnd=4, color=c["blue"]).encode(
+    bars = alt.Chart(data).mark_bar(height=alt.RelativeBandSize(0.6), cornerRadiusEnd=4, color=c["main"]).encode(
         x=alt.X("XIRR:Q", title="XIRR (after tax)", axis=alt.Axis(format="%", tickCount=8),
                 # Room past the longest bars for their value labels
                 scale=alt.Scale(domain=[min(data["XIRR"].min(), 0) * 1.25, max(data["XIRR"].max(), 0) * 1.15])),
