@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -302,7 +303,8 @@ def create_all_tables(gc, wht, agent_fee, total_investment, Annual_Interest_Rate
 
 
 def save_model(input_file_name, **kwargs):
-    wb = load_workbook(filename=f"{input_file_name}.xlsx")
+    # Resolve relative to this file so the template is found whatever folder the app is started from
+    wb = load_workbook(filename=Path(__file__).parent / f"{input_file_name}.xlsx")
 
     ws = wb["GC"]
 

@@ -1,0 +1,21 @@
+# APS corporate colors: Color1 #E83E33 (red), Color2-6 teal ramp.
+# Headings written as :red[...] / :blue[...] pick up redColor / blueColor.
+[theme]
+primaryColor = "#E83E33"
+
+[theme.light]
+primaryColor = "#E83E33"
+redColor = "#E83E33"
+blueColor = "#005864"
+# Use the exact brand colors for colored text (Streamlit would otherwise darken them)
+redTextColor = "#E83E33"
+blueTextColor = "#005864"
+chartCategoricalColors = ["#468E99", "#E83E33", "#005864", "#80B5C0"]
+
+[theme.dark]
+primaryColor = "#E83E33"
+redColor = "#E83E33"
+blueColor = "#80B5C0"
+redTextColor = "#E83E33"
+blueTextColor = "#80B5C0"
+chartCategoricalColors = ["#468E99", "#E83E33", "#80B5C0", "#CEE5E8"]
