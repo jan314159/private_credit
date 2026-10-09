@@ -2,6 +2,8 @@ from datetime import date
 
 import streamlit as st
 
+from analysis import run_model
+
 # Inputs that should survive switching between pages, with their first-visit defaults.
 # Do not add data_editor keys here: their state cannot be assigned.
 INPUT_DEFAULTS = {
@@ -31,3 +33,25 @@ def keep_inputs():
     """
     for key, default in INPUT_DEFAULTS.items():
         st.session_state[key] = st.session_state.get(key, default)
+
+
+def require_loan_terms():
+    """Stop the page with a hint until the Loan terms page has produced a schedule."""
+    if "repayment_df" not in st.session_state or st.session_state.repayment_df.empty:
+        st.warning("⚠️ Please configure the 'Loan Terms' first to generate the base schedule.")
+        st.stop()
+
+
+def model_inputs():
+    """Assumptions from the Summary page, converted as the Summary page does."""
+    s = st.session_state
+    return {
+        "wht": s.wht_input / 100,
+        "agent_fee": s.in_agent_fee / 100,
+        "total_investment": s.in_other_costs + s.funding_amount,
+        "sicav_costs_monthly": s.in_sicav / 100 / 12,
+    }
+
+
+# Model run cached on its inputs, shared by the Charts and Sensitivity pages
+cached_model = st.cache_data(run_model, show_spinner=False)

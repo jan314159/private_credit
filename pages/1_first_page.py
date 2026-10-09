@@ -1,3 +1,5 @@
+from datetime import date
+
 import streamlit as st
 from utils import create_interest_payment_table, create_principal_payment_table, get_repayment_table
 from state import keep_inputs
@@ -37,6 +39,10 @@ if "editor_principal" not in st.session_state:
     st.session_state.principal_base = st.session_state.principal_df
 
 
+# Streamlit's default date range only reaches 10 years ahead, too short for long loans
+DATE_RANGE = {"min_value": date(2000, 1, 1), "max_value": date(2100, 12, 31)}
+
+
 # 4. UI LAYOUT
 st.title(":red[_Loan terms_]")
 
@@ -51,9 +57,9 @@ with loan_inputs:
     col_d1, col_d2 = st.columns(2)
 
     with col_d1:
-        st.date_input("Funding date", key="funding_date", on_change=reset_schedules)
+        st.date_input("Funding date", key="funding_date", on_change=reset_schedules, **DATE_RANGE)
     with col_d2:
-        st.date_input("Maturity date", key="maturity_date", on_change=reset_schedules)
+        st.date_input("Maturity date", key="maturity_date", on_change=reset_schedules, **DATE_RANGE)
 
     st.number_input(
         "Interest rate (%)",
