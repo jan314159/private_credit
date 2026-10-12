@@ -23,6 +23,11 @@ INPUT_DEFAULTS = {
     "arr_fee": 0,
 }
 
+# Remembered across pages too, but not part of the model
+UI_DEFAULTS = {
+    "saved_by": "",
+}
+
 
 def keep_inputs():
     """Keep widget values across pages; call at the top of every page.
@@ -31,7 +36,7 @@ def keep_inputs():
     the key detaches it from the widget so it persists, and sets the default on
     the first visit.
     """
-    for key, default in INPUT_DEFAULTS.items():
+    for key, default in {**INPUT_DEFAULTS, **UI_DEFAULTS}.items():
         st.session_state[key] = st.session_state.get(key, default)
 
 

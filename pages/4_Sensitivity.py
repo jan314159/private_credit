@@ -2,7 +2,8 @@ import pandas as pd
 import streamlit as st
 
 import charts
-from analysis import deal_metrics, delay_payments, interest_at_maturity, principal_loss
+from analysis import (deal_metrics, delay_payments, interest_at_maturity, principal_loss, shift_repayment,
+                      timing_label)
 from state import cached_model, keep_inputs, model_inputs, require_loan_terms
 from utils import get_repayment_table
 
@@ -36,59 +37,60 @@ if base is None or base["xirr"] is None:
     st.stop()
 
 # ---------------------------------------------------------------- heatmap
-st.header(":blue[XIRR sensitivity]")
-st.caption("After-tax XIRR when the loan interest rate and one other assumption change. "
+st.header(":blue[XIRR vs. interest rate and repayment timing]")
+st.caption("After-tax XIRR if the loan is repaid earlier or later than planned, at different interest rates. "
+           "Interest keeps accruing at the loan rate until the actual repayment. "
            "Teal is better than the comparison XIRR, red is worse; the outlined cell is the current deal.")
 
-# Second axis: label -> (session key holding the % input, model input it drives, default step in %-points)
-DRIVERS = {
-    "WHT (%)": ("wht_input", "wht", 2.5),
-    "Agent fee (%)": ("in_agent_fee", "agent_fee", 0.25),
-    "SICAV costs p.a. (%)": ("in_sicav", "sicav_costs_monthly", 0.5),
-}
-
-c1, c2, c3, c4 = st.columns(4)
-driver = c1.selectbox("Compare interest rate with", list(DRIVERS))
-key, model_key, default_step = DRIVERS[driver]
-rate_step = c2.number_input("Interest rate step (%-points)", min_value=0.05, value=0.5, step=0.25, format="%.2f")
-driver_step = c3.number_input(f"{driver.split(' (')[0]} step (%-points)", min_value=0.05, value=default_step,
-                              step=0.25, format="%.2f", key=f"step_{key}")
-reference = c4.number_input("Compare against XIRR (%)", value=round(base["xirr"] * 100, 2), step=0.5,
+c1, c2, c3, c4, c5 = st.columns(5)
+rate_step = c1.number_input("Interest rate step (%-points)", min_value=0.05, value=0.5, step=0.25, format="%.2f")
+month_step = c2.number_input("Timing step (months)", min_value=1, max_value=24, value=3, step=1)
+max_early = c3.number_input("Up to months early", min_value=0, max_value=120, value=6, step=month_step)
+max_late = c4.number_input("Up to months late", min_value=0, max_value=120, value=12, step=month_step)
+reference = c5.number_input("Compare against XIRR (%)", value=round(base["xirr"] * 100, 2), step=0.5,
                             format="%.2f") / 100
 
-
-def to_model(value_pct):
-    return value_pct / 100 / 12 if model_key == "sicav_costs_monthly" else value_pct / 100
-
-
 base_rate = s.interest_rate_pct
-base_driver = s[key]
 rates = sorted({round(base_rate + rate_step * k, 4) for k in range(-3, 4) if base_rate + rate_step * k >= 0})
-drivers = sorted({round(base_driver + driver_step * k, 4) for k in range(-2, 3) if base_driver + driver_step * k >= 0})
 
-rows = []
+# Early repayment can go back no further than the month after funding
+months_to_maturity = ((s.maturity_date.year - s.funding_date.year) * 12
+                      + s.maturity_date.month - s.funding_date.month)
+shifts = sorted({0, *range(-month_step, -max_early - 1, -month_step), *range(month_step, max_late + 1, month_step)})
+shifts = [m for m in shifts if m > -months_to_maturity]
+
+
+@st.cache_data(show_spinner=False)
+def timing_grid(rates, base_rate, shifts, funding_amount, interest_df, principal_df, funding_date, maturity_date, inputs):
+    rows = []
+    for months in shifts:
+        interest, principal, maturity = shift_repayment(interest_df, principal_df, funding_date, maturity_date, months)
+        for rate in rates:
+            schedule = get_repayment_table(funding_amount, rate / 100, interest, principal, maturity, funding_date)
+            try:
+                cf, _, _ = cached_model(schedule, **inputs)
+                xirr = deal_metrics(cf, inputs["total_investment"])["xirr"]
+            except Exception:
+                xirr = None
+            rows.append({"X": f"{rate:.2f}%", "Y": timing_label(months), "XIRR": xirr,
+                         "Base": abs(rate - base_rate) < 1e-9 and months == 0})
+    grid = pd.DataFrame(rows)
+    grid["XIRR"] = grid["XIRR"].astype(float)
+    return grid
+
+
 with st.spinner("Calculating..."):
-    for rate in rates:
-        schedule = get_repayment_table(s.funding_amount, rate / 100, s.interest_df, s.principal_df,
-                                       s.maturity_date, s.funding_date)
-        for value in drivers:
-            metrics, _ = xirr_of(schedule, **{model_key: to_model(value)})
-            rows.append({
-                "X": f"{rate:.2f}%", "Y": f"{value:.2f}%",
-                "XIRR": None if metrics is None else metrics["xirr"],
-                "Base": abs(rate - base_rate) < 1e-9 and abs(value - base_driver) < 1e-9,
-            })
-grid = pd.DataFrame(rows)
-grid["XIRR"] = grid["XIRR"].astype(float)
+    grid = timing_grid(rates, base_rate, shifts, s.funding_amount, s.interest_df, s.principal_df,
+                       s.funding_date, s.maturity_date, inputs)
 
+x_order = [f"{r:.2f}%" for r in rates]
+y_order = [timing_label(m) for m in shifts]  # early at the top, late at the bottom
 st.altair_chart(
-    charts.xirr_heatmap(grid, "Loan interest rate", driver, reference,
-                        x_order=[f"{r:.2f}%" for r in rates], y_order=[f"{v:.2f}%" for v in reversed(drivers)]),
+    charts.xirr_heatmap(grid, "Loan interest rate", "Repayment vs. plan", reference, x_order=x_order, y_order=y_order),
     width="stretch",
 )
 with st.expander("Table"):
-    table = grid.pivot(index="Y", columns="X", values="XIRR")
-    table = table.loc[[f"{v:.2f}%" for v in reversed(drivers)], [f"{r:.2f}%" for r in rates]]
+    table = grid.pivot(index="Y", columns="X", values="XIRR").loc[y_order, x_order]
     st.dataframe(table.map(lambda v: "n/a" if pd.isna(v) else f"{v:.2%}"))
 
 # ---------------------------------------------------------------- stress scenarios

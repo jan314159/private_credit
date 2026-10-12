@@ -50,7 +50,7 @@ def create_principal_payment_table(maturity_date: date):
     return make_df_with_interest_rows([maturity_date], interest=False, blank_rows=11)
 
 
-def _schedule_lookup(schedule_df: pd.DataFrame) -> dict:
+def schedule_lookup(schedule_df: pd.DataFrame) -> dict:
     """Map month-end date -> amount for the filled rows of an interest/principal schedule.
 
     Dates are snapped to their month end so they line up with the monthly grid
@@ -69,8 +69,8 @@ def _schedule_lookup(schedule_df: pd.DataFrame) -> dict:
 
 
 def get_repayment_table(principal, interest, interest_df, principal_df, maturity_date, funding_date):
-    interest_lookup = _schedule_lookup(interest_df)
-    principal_lookup = _schedule_lookup(principal_df)
+    interest_lookup = schedule_lookup(interest_df)
+    principal_lookup = schedule_lookup(principal_df)
 
     first_month = end_of_month(funding_date)
     last_month = end_of_month(maturity_date)
