@@ -8,3 +8,4 @@ python-dateutil==2.9.0.post0
 SQLAlchemy==2.1.4
 PyMySQL==1.2.3
 cryptography==50.0.1
+tomli==2.5.0
