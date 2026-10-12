@@ -2,7 +2,7 @@
 import numpy as np
 import pandas as pd
 
-from utils import create_all_tables, end_of_month
+from utils import create_all_tables, end_of_month, schedule_lookup
 
 # Fixed on the Summary page by design
 TAX_RATE = 0
@@ -104,3 +104,38 @@ def interest_at_maturity(gc):
     gc.loc[1:, "Interest Paid"] = 0.0
     gc.loc[gc.index[-1], "Interest Paid"] = total
     return gc
+
+
+def shift_repayment(interest_df, principal_df, funding_date, maturity_date, months):
+    """Schedules for repaying `months` later (positive) or earlier (negative) than planned.
+
+    Principal repayments move by `months`. Interest keeps accruing at the loan rate until the new
+    maturity, where everything still owed is paid; planned interest dates from the earlier of the two
+    maturities onwards are replaced by that final payment. Returns (interest_df, principal_df, maturity).
+    """
+    if months == 0:
+        return interest_df, principal_df, maturity_date
+
+    first = end_of_month(funding_date, 1)  # earliest month a repayment can fall in
+    new_maturity = max(end_of_month(maturity_date, months), first)
+    cutoff = min(end_of_month(maturity_date), new_maturity)
+
+    interest = {d: a for d, a in schedule_lookup(interest_df).items() if d < cutoff}
+    interest[new_maturity] = "interest"
+
+    principal = {}
+    for d, amount in schedule_lookup(principal_df).items():
+        principal.setdefault(min(max(end_of_month(d, months), first), new_maturity), amount)
+    principal[new_maturity] = "bullet"
+
+    def to_df(entries):
+        return pd.DataFrame({"Date": list(entries), "Amount*": list(entries.values())})
+
+    return to_df(dict(sorted(interest.items()))), to_df(dict(sorted(principal.items()))), new_maturity
+
+
+def timing_label(months):
+    if months == 0:
+        return "On plan"
+    unit = "month" if abs(months) == 1 else "months"
+    return f"{abs(months)} {unit} {'late' if months > 0 else 'early'}"

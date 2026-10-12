@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from utils import create_all_tables, save_model
+from model_store import save_controls
 from state import keep_inputs
 
 # 1. SETUP
@@ -263,3 +264,6 @@ if "funding_amount" in st.session_state:
         file_name=f"{st.session_state.project_name}_{str(date.today()).replace('-', '')}.xlsx",
         mime="application/vnd.ms-excel"
     )
+
+with st.sidebar.expander("💾 Save to database"):
+    save_controls(st.container(), "summary")
