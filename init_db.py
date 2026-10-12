@@ -9,7 +9,12 @@ import getpass
 import json
 import os
 import sys
-import tomllib
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:
+    import tomli as tomllib
+
 from pathlib import Path
 
 from db import DB_DEFAULTS, create_tables, make_engine
